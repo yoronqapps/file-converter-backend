@@ -14,14 +14,14 @@ app.use(cors());
 const ALLOWED_EXTENSIONS = ['docx', 'doc', 'cfb', 'txt', 'xlsx', 'xls', 'pptx', 'ppt', 'md', 'pdf', 'png', 'jpg', 'jpeg', 'webp'];
 const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15MB Limit
 
-const upload = multer({ 
+const upload = multer({
   dest: path.join(__dirname, 'tmp'),
   limits: {
     fileSize: MAX_FILE_SIZE
   },
   fileFilter: (req, file, cb) => {
     const ext = file.originalname.split('.').pop().toLowerCase();
-    
+
     if (ALLOWED_EXTENSIONS.includes(ext)) {
       cb(null, true); // Extension is allowed
     } else {
@@ -31,7 +31,7 @@ const upload = multer({
 });
 
 const GOTENBERG_URL = process.env.GOTENBERG_URL || 'http://localhost:3000';
-const PDF2DOCX_URL = process.env.PDF2DOCX_URL || 'http://pdf2docx-service.railway.internal:5000'; // Update with your internal or environment variable URL
+const PDF2DOCX_URL = process.env.PDF2DOCX_URL || 'http://pdf2docx-service.railway.internal:5000';
 
 app.post('/convert', upload.single('file'), async (req, res) => {
   const targetFormat = req.body.target;
@@ -67,7 +67,41 @@ app.post('/convert', upload.single('file'), async (req, res) => {
       return res.send(resultBuffer);
     }
 
-    // ─── ROUTE 2: OFFICE / TEXT DOCUMENTS -> PDF (FORWARD TO GOTENBERG) ────────
+    // ─── ROUTE 2: MARKDOWN -> PDF (CHROMIUM ROUTE, NOT LIBREOFFICE) ────────────
+    // Gotenberg's LibreOffice route has no markdown parser and rejects .md with a 400.
+    // Markdown needs Chromium's dedicated route, which requires an index.html
+    // wrapper that references the markdown file via the toHTML template helper.
+    if (sourceExt === 'md' && targetFormat === 'pdf') {
+      const form = new FormData();
+
+      const indexHtml = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+  {{ toHTML "content.md" }}
+</body>
+</html>`;
+
+      form.append('files', new Blob([indexHtml], { type: 'text/html' }), 'index.html');
+      form.append('files', new Blob([fileBuffer]), 'content.md');
+
+      const response = await fetch(`${GOTENBERG_URL}/forms/chromium/convert/markdown`, {
+        method: 'POST',
+        body: form,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Gotenberg markdown route returned ${response.status}`);
+      }
+
+      const resultBuffer = Buffer.from(await response.arrayBuffer());
+
+      res.setHeader('Content-Disposition', `attachment; filename="converted.pdf"`);
+      res.setHeader('Content-Type', 'application/pdf');
+      return res.send(resultBuffer);
+    }
+
+    // ─── ROUTE 3: OFFICE / TEXT DOCUMENTS -> PDF (FORWARD TO GOTENBERG/LIBREOFFICE) ──
     if (targetFormat === 'pdf') {
       const form = new FormData();
       form.append('files', new Blob([fileBuffer]), inputFile.originalname);
