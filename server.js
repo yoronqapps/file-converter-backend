@@ -10,6 +10,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REQUEST_TIMEOUT_MS = 90 * 1000; // 90 seconds
 const app = express();
+app.set('trust proxy', 1);
 const ALLOWED_ORIGINS = [
   'https://file-converter-ashy-five.vercel.app',
   'http://localhost:5173', // for local dev
